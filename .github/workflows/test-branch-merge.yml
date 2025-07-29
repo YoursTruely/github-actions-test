@@ -1,0 +1,57 @@
+name: Weekly Merge of project PRs
+
+on:
+  schedule:
+    - cron: '0 9 * * 3'  # Every Wednesday at 09:00 UTC
+  workflow_dispatch:      # Allow manual trigger
+
+env:
+  KEYWORD: "b-"  # 🔑 Set your keyword here
+
+jobs:
+  merge-matching-prs:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Configure Git
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+    - name: Create test branch from develop
+      run: |
+        BRANCH_NAME="test-$(date +'%Y-%m-%d')"
+        git fetch origin develop
+        git checkout origin/develop -b "$BRANCH_NAME"
+        echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
+
+    - name: Fetch open PRs targeting develop
+      uses: octokit/request-action@v2.x
+      id: pr_list
+      with:
+        route: GET /repos/${{ github.repository }}/pulls
+        parameters: |
+          base: develop
+          state: open
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Merge PRs with branch names containing keyword
+      run: |
+        echo "Filtering PRs with keyword: $KEYWORD"
+        echo '${{ steps.pr_list.outputs.data }}' \
+        | jq -r --arg kw "$KEYWORD" '.[] | select(.head.ref | test($kw)) | .head.ref' \
+        | while read BRANCH; do
+            echo "Merging branch $BRANCH into $BRANCH_NAME..."
+            git fetch origin $BRANCH
+            git merge origin/$BRANCH --no-edit || echo "Conflict in $BRANCH — skipped"
+          done
+
+    - name: Push test branch
+      run: |
+        git push origin "$BRANCH_NAME"
